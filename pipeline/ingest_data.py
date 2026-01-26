@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from tqdm.auto import tqdm
 
 # ------------------------
-# SCHEMA (CSV only)
+# SCHEMA (CSV only, tripdata)
 # ------------------------
 CSV_DTYPE = {
     "VendorID": "Int64",
@@ -48,7 +48,6 @@ def ingest_csv(url, engine, target_table, chunksize):
 
     first_chunk = next(df_iter)
     first_chunk.head(0).to_sql(target_table, engine, if_exists="replace", index=False)
-
     print(f"Table {target_table} created")
 
     first_chunk.to_sql(target_table, engine, if_exists="append", index=False)
@@ -75,6 +74,12 @@ def ingest_parquet(url, engine, target_table):
     print(f"✅ Finished Parquet ingestion: {target_table}")
 
 
+def ingest_zone_lookup(url, engine, target_table):
+    df = pd.read_csv(url)
+    df.columns = [c.lower() for c in df.columns]  # optional: lowercase
+    df.to_sql(target_table, engine, if_exists="replace", index=False)
+    print(f"✅ Finished zone lookup ingestion: {target_table}")
+
 # ------------------------
 # CLI
 # ------------------------
@@ -85,10 +90,10 @@ def ingest_parquet(url, engine, target_table):
 @click.option('--pg-port', default=lambda: os.getenv("POSTGRES_PORT", "5432"))
 @click.option('--pg-db',   default=lambda: os.getenv("POSTGRES_DB", "ny_taxi"))
 
-@click.option('--dataset', required=True, type=click.Choice(["yellow", "green"]))
-@click.option('--format', 'file_format', required=True, type=click.Choice(["csv", "parquet"]))
-@click.option('--year', type=int, required=True)
-@click.option('--month', type=int, required=True)
+@click.option('--dataset', required=True, type=click.Choice(["yellow", "green", "zone_lookup"]))
+@click.option('--format', 'file_format', required=False, type=click.Choice(["csv", "parquet"]))
+@click.option('--year', type=int, required=False)
+@click.option('--month', type=int, required=False)
 @click.option('--chunksize', default=100_000)
 @click.option('--target-table', required=True)
 def main(pg_user, pg_pass, pg_host, pg_port, pg_db,
@@ -98,7 +103,11 @@ def main(pg_user, pg_pass, pg_host, pg_port, pg_db,
         f"postgresql://{pg_user}:{pg_pass}@{pg_host}:{pg_port}/{pg_db}"
     )
 
-    if file_format == "csv":
+    if dataset == "zone_lookup":
+        url = "https://github.com/DataTalksClub/nyc-tlc-data/releases/download/misc/taxi_zone_lookup.csv"
+        ingest_zone_lookup(url, engine, target_table)
+
+    elif file_format == "csv":
         url = (
             f"https://github.com/DataTalksClub/nyc-tlc-data/"
             f"releases/download/{dataset}/"
@@ -106,7 +115,7 @@ def main(pg_user, pg_pass, pg_host, pg_port, pg_db,
         )
         ingest_csv(url, engine, target_table, chunksize)
 
-    else:
+    else:  # parquet
         url = (
             f"https://d37ci6vzurychx.cloudfront.net/trip-data/"
             f"{dataset}_tripdata_{year:04d}-{month:02d}.parquet"
